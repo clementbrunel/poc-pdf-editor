@@ -264,6 +264,29 @@ async function extractJavaScript(pdfPath, shouldSave = false, debugMode = false,
       if (!listOnly) {
         const preview = code.substring(0, 100).replace(/\n/g, ' ');
         console.log(`📜 ${name}`);
+
+        // Extraire et afficher les URLs si présentes
+        const urlPatterns = [
+          /app\.launchURL\s*\(\s*["']([^"']+)["']/gi,
+          /submitForm\s*\(\s*{[^}]*cURL\s*:\s*["']([^"']+)["']/gi,
+          /cURL:\s*["']([^"']+)["']/gi,
+          /https?:\/\/[^\s"')}]+/gi
+        ];
+
+        const urls = new Set();
+        for (const pattern of urlPatterns) {
+          let match;
+          while ((match = pattern.exec(code)) !== null) {
+            urls.add(match[1] || match[0]);
+          }
+        }
+
+        if (urls.size > 0) {
+          urls.forEach(url => {
+            console.log(`   🌐 ${url}`);
+          });
+        }
+
         if (grepPattern) {
           // Afficher la ligne qui matche
           const lines = code.split('\n');
@@ -271,7 +294,7 @@ async function extractJavaScript(pdfPath, shouldSave = false, debugMode = false,
           if (matchingLine) {
             console.log(`   ↳ ${matchingLine.trim().substring(0, 80)}`);
           }
-        } else {
+        } else if (urls.size === 0) {
           console.log(`   ↳ ${preview}${code.length > 100 ? '...' : ''}`);
         }
       } else {
@@ -307,14 +330,21 @@ async function extractJavaScript(pdfPath, shouldSave = false, debugMode = false,
     }
 
     // Fonction helper pour extraire JavaScript depuis une action
-    const extractJSFromAction = (action, actionName) => {
+    const extractJSFromAction = (action, actionName, collected = new Set()) => {
+      // Éviter les boucles infinies dans les actions chaînées
+      const actionKey = action.toString();
+      if (collected.has(actionKey)) {
+        return null;
+      }
+      collected.add(actionKey);
+
       const sRef = action.get(PDFName.of('S'));
       if (sRef) {
         const actionType = pdfDoc.context.lookup(sRef);
         const actionTypeStr = actionType.asString ? actionType.asString() : actionType.toString();
 
         if (debugMode) {
-          console.log(`  Type d'action: ${actionTypeStr}`);
+          console.log(`  Type d'action: ${actionTypeStr} (${actionName})`);
         }
 
         if (actionTypeStr === '/JavaScript' || actionTypeStr === 'JavaScript') {
@@ -333,8 +363,82 @@ async function extractJavaScript(pdfPath, shouldSave = false, debugMode = false,
               return code.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
             }
           }
+        } else if (actionTypeStr === '/SubmitForm' || actionTypeStr === 'SubmitForm') {
+          // Actions SubmitForm peuvent contenir des URLs web !
+          const fRef = action.get(PDFName.of('F'));
+          if (fRef) {
+            const fileSpec = pdfDoc.context.lookup(fRef);
+            let url = '';
+
+            // L'URL peut être directement dans F ou dans F/FS
+            if (fileSpec && fileSpec.decodeText) {
+              url = fileSpec.decodeText();
+            } else if (fileSpec) {
+              const fsRef = fileSpec.get(PDFName.of('FS'));
+              if (fsRef) {
+                const fs = pdfDoc.context.lookup(fsRef);
+                url = fs.decodeText ? fs.decodeText() : fs.toString();
+              }
+              const fStrRef = fileSpec.get(PDFName.of('F'));
+              if (fStrRef && !url) {
+                const fStr = pdfDoc.context.lookup(fStrRef);
+                url = fStr.decodeText ? fStr.decodeText() : fStr.toString();
+              }
+            }
+
+            if (url) {
+              // Créer un pseudo-JavaScript pour afficher l'URL
+              const pseudoCode = `// Action SubmitForm - Appel Web
+// Nom: ${actionName}
+// URL: ${url}
+// Type: ${actionTypeStr}
+
+this.submitForm({
+  cURL: "${url}",
+  cSubmitAs: "PDF"
+});`;
+              return pseudoCode;
+            }
+          }
+        } else if (actionTypeStr === '/URI' || actionTypeStr === 'URI') {
+          // Actions URI - liens web directs
+          const uriRef = action.get(PDFName.of('URI'));
+          if (uriRef) {
+            const uri = pdfDoc.context.lookup(uriRef);
+            const url = uri.decodeText ? uri.decodeText() : uri.toString();
+
+            const pseudoCode = `// Action URI - Lien Web
+// Nom: ${actionName}
+// URL: ${url}
+
+app.launchURL("${url}", true);`;
+            return pseudoCode;
+          }
+        } else if (debugMode) {
+          // En mode debug, logger les types d'actions non-JavaScript
+          console.log(`    ℹ️  Action ${actionTypeStr} (pas JavaScript)`);
         }
       }
+
+      // Vérifier les actions chaînées (Next)
+      const nextRef = action.get(PDFName.of('Next'));
+      if (nextRef) {
+        const nextAction = pdfDoc.context.lookup(nextRef);
+        // Si Next est un tableau, le parcourir
+        if (nextAction && nextAction.size) {
+          for (let i = 0; i < nextAction.size(); i++) {
+            const nextActionRef = nextAction.lookup(i);
+            const nextAct = pdfDoc.context.lookup(nextActionRef);
+            const code = extractJSFromAction(nextAct, `${actionName}_Next${i + 1}`, collected);
+            if (code) return code;
+          }
+        } else if (nextAction) {
+          // Next est une action unique
+          const code = extractJSFromAction(nextAction, `${actionName}_Next`, collected);
+          if (code) return code;
+        }
+      }
+
       return null;
     };
 
@@ -633,12 +737,20 @@ Options:
   --filter <nom>      Filtre par nom de script/champ (ex: --filter bouton)
   --grep <pattern>    Filtre par contenu (regex, ex: --grep "app.alert")
 
+Recherche d'appels web (URLs):
+  Le script détecte automatiquement et affiche les URLs dans:
+  - Actions SubmitForm (envoi de formulaire)
+  - Actions URI (liens web)
+  - app.launchURL() dans le JavaScript
+  - submitForm() dans le JavaScript
+
 Exemples:
   node src/extract-js.js file.pdf --list
   node src/extract-js.js file.pdf --save
   node src/extract-js.js file.pdf --filter Page20
   node src/extract-js.js file.pdf --grep "submitForm" --save
-  node src/extract-js.js file.pdf --list | grep -i bouton
+  node src/extract-js.js file.pdf --grep "http"
+  node src/extract-js.js file.pdf --filter bouton --save
   `);
   process.exit(1);
 }
