@@ -395,6 +395,92 @@ async function extractJavaScript(pdfPath, shouldSave = false, debugMode = false)
       }
     }
 
+    // Fonction helper pour inspecter et extraire JavaScript d'un champ
+    const inspectField = (field, fieldIndex, scriptsFound) => {
+      const fieldName = field.get(PDFName.of('T'));
+      const name = fieldName ? pdfDoc.context.lookup(fieldName).decodeText?.() || `Field${fieldIndex}` : `Field${fieldIndex}`;
+
+      if (debugMode) {
+        console.log(`  Champ ${fieldIndex}: ${name}`);
+
+        // Afficher toutes les clés du champ
+        if (field.dict && field.dict.entries) {
+          const keys = [];
+          for (const [key, value] of field.dict.entries()) {
+            keys.push(key);
+          }
+          if (keys.length > 0) {
+            console.log(`    Clés: ${keys.join(', ')}`);
+          }
+        }
+      }
+
+      // Chercher JavaScript dans /A (Action)
+      const actionRef = field.get(PDFName.of('A'));
+      if (actionRef) {
+        const action = pdfDoc.context.lookup(actionRef);
+        const code = extractJSFromAction(action, `${name}_Action`);
+
+        if (code) {
+          scriptsFound.push({ name: `${name}_Action`, code });
+
+          console.log(`\n${'='.repeat(60)}`);
+          console.log(`📜 Script: ${name}_Action`);
+          console.log(`${'='.repeat(60)}\n`);
+          console.log(code);
+          console.log(`\n${'='.repeat(60)}\n`);
+        }
+      }
+
+      // Chercher JavaScript dans /AA (Additional Actions du champ)
+      const fieldAARef = field.get(PDFName.of('AA'));
+      if (fieldAARef) {
+        const fieldAA = pdfDoc.context.lookup(fieldAARef);
+
+        if (debugMode) {
+          console.log(`    /AA trouvé sur ce champ`);
+        }
+
+        // Actions possibles sur un champ
+        const fieldActionTypes = ['K', 'F', 'V', 'C', 'Fo', 'Bl', 'PO', 'PC', 'PV', 'PI'];
+        // K = Keystroke, F = Format, V = Validate, C = Calculate, etc.
+
+        for (const actionType of fieldActionTypes) {
+          const fieldActionRef = fieldAA.get(PDFName.of(actionType));
+          if (fieldActionRef) {
+            const fieldAction = pdfDoc.context.lookup(fieldActionRef);
+            const code = extractJSFromAction(fieldAction, `${name}_${actionType}`);
+
+            if (code) {
+              scriptsFound.push({ name: `${name}_${actionType}`, code });
+
+              console.log(`\n${'='.repeat(60)}`);
+              console.log(`📜 Script: ${name}_${actionType}`);
+              console.log(`${'='.repeat(60)}\n`);
+              console.log(code);
+              console.log(`\n${'='.repeat(60)}\n`);
+            }
+          }
+        }
+      }
+
+      // Vérifier si le champ a des enfants (Kids)
+      const kidsRef = field.get(PDFName.of('Kids'));
+      if (kidsRef) {
+        const kids = pdfDoc.context.lookup(kidsRef);
+        if (kids && kids.size && kids.size() > 0) {
+          if (debugMode) {
+            console.log(`    ${kids.size()} enfant(s) trouvé(s)`);
+          }
+          for (let j = 0; j < kids.size(); j++) {
+            const kidRef = kids.lookup(j);
+            const kid = pdfDoc.context.lookup(kidRef);
+            inspectField(kid, `${fieldIndex}_${j + 1}`, scriptsFound);
+          }
+        }
+      }
+    };
+
     // Chercher le JavaScript dans les champs de formulaire (/AcroForm)
     const acroFormRef = catalog.get(PDFName.of('AcroForm'));
     if (acroFormRef) {
@@ -403,7 +489,6 @@ async function extractJavaScript(pdfPath, shouldSave = false, debugMode = false)
 
       if (debugMode) {
         console.log('Type de AcroForm:', acroForm.constructor.name);
-        console.log('Contenu:', acroForm.toString());
 
         if (acroForm.dict && acroForm.dict.entries) {
           console.log('Clés dans /AcroForm:');
@@ -414,106 +499,64 @@ async function extractJavaScript(pdfPath, shouldSave = false, debugMode = false)
         console.log();
       }
 
-      // Chercher le tableau des champs
-      const fieldsRef = acroForm.get(PDFName.of('Fields'));
-      if (fieldsRef) {
-        const fields = pdfDoc.context.lookup(fieldsRef);
+      const scriptsFound = [];
+
+      // D'abord, vérifier l'ordre de calcul (/CO) - contient souvent des champs avec JavaScript
+      const coRef = acroForm.get(PDFName.of('CO'));
+      if (coRef) {
+        const co = pdfDoc.context.lookup(coRef);
 
         if (debugMode) {
-          console.log(`Nombre de champs: ${fields.size ? fields.size() : 'N/A'}\n`);
+          console.log(`🔍 Calculate Order (/CO) trouvé avec ${co.size ? co.size() : 0} champ(s)\n`);
         }
 
-        const scriptsFound = [];
+        if (co && co.size && co.size() > 0) {
+          console.log(`Inspection des ${co.size()} champs dans l'ordre de calcul...\n`);
 
-        // Parcourir tous les champs
-        if (fields.size && fields.size() > 0) {
-          for (let i = 0; i < fields.size(); i++) {
-            const fieldRef = fields.lookup(i);
+          for (let i = 0; i < co.size(); i++) {
+            const fieldRef = co.lookup(i);
             const field = pdfDoc.context.lookup(fieldRef);
-
-            if (debugMode) {
-              console.log(`  Champ ${i + 1}:`);
-              // Obtenir le nom du champ si disponible
-              const fieldName = field.get(PDFName.of('T'));
-              if (fieldName) {
-                const name = pdfDoc.context.lookup(fieldName);
-                console.log(`    Nom: ${name.decodeText ? name.decodeText() : name.toString()}`);
-              }
-            }
-
-            // Chercher JavaScript dans /A (Action)
-            const actionRef = field.get(PDFName.of('A'));
-            if (actionRef) {
-              const action = pdfDoc.context.lookup(actionRef);
-              const code = extractJSFromAction(action, `Field${i + 1}_Action`);
-
-              if (code) {
-                const fieldName = field.get(PDFName.of('T'));
-                const name = fieldName ? pdfDoc.context.lookup(fieldName).decodeText?.() || `Field${i + 1}` : `Field${i + 1}`;
-                scriptsFound.push({ name: `${name}_Action`, code });
-
-                console.log(`\n${'='.repeat(60)}`);
-                console.log(`📜 Script: ${name}_Action`);
-                console.log(`${'='.repeat(60)}\n`);
-                console.log(code);
-                console.log(`\n${'='.repeat(60)}\n`);
-              }
-            }
-
-            // Chercher JavaScript dans /AA (Additional Actions du champ)
-            const fieldAARef = field.get(PDFName.of('AA'));
-            if (fieldAARef) {
-              const fieldAA = pdfDoc.context.lookup(fieldAARef);
-
-              if (debugMode) {
-                console.log(`    /AA trouvé sur ce champ`);
-              }
-
-              // Actions possibles sur un champ
-              const fieldActionTypes = ['K', 'F', 'V', 'C', 'Fo', 'Bl', 'PO', 'PC', 'PV', 'PI'];
-              // K = Keystroke, F = Format, V = Validate, C = Calculate, etc.
-
-              for (const actionType of fieldActionTypes) {
-                const fieldActionRef = fieldAA.get(PDFName.of(actionType));
-                if (fieldActionRef) {
-                  const fieldAction = pdfDoc.context.lookup(fieldActionRef);
-                  const code = extractJSFromAction(fieldAction, `Field${i + 1}_${actionType}`);
-
-                  if (code) {
-                    const fieldName = field.get(PDFName.of('T'));
-                    const name = fieldName ? pdfDoc.context.lookup(fieldName).decodeText?.() || `Field${i + 1}` : `Field${i + 1}`;
-                    scriptsFound.push({ name: `${name}_${actionType}`, code });
-
-                    console.log(`\n${'='.repeat(60)}`);
-                    console.log(`📜 Script: ${name}_${actionType}`);
-                    console.log(`${'='.repeat(60)}\n`);
-                    console.log(code);
-                    console.log(`\n${'='.repeat(60)}\n`);
-                  }
-                }
-              }
-            }
+            inspectField(field, i + 1, scriptsFound);
           }
         }
+      } else {
+        // Si pas de /CO, parcourir les champs normaux
+        const fieldsRef = acroForm.get(PDFName.of('Fields'));
+        if (fieldsRef) {
+          const fields = pdfDoc.context.lookup(fieldsRef);
 
-        if (scriptsFound.length > 0) {
-          if (shouldSave) {
-            scriptsFound.forEach((script) => {
-              const fileName = `${pdfBaseName}_extract_${script.name}.js`;
-              const fixedCode = fixJavaScriptNewlines(script.code);
-              writeFileSync(fileName, fixedCode, 'utf-8');
-              console.log(`✅ Sauvegardé dans: ${fileName}`);
-            });
-            console.log();
+          if (debugMode) {
+            console.log(`Nombre de champs dans /Fields: ${fields.size ? fields.size() : 'N/A'}\n`);
           }
 
-          console.log(`\n✅ ${scriptsFound.length} script(s) JavaScript trouvé(s) dans les champs de formulaire !`);
-          return;
+          // Parcourir tous les champs
+          if (fields.size && fields.size() > 0) {
+            for (let i = 0; i < fields.size(); i++) {
+              const fieldRef = fields.lookup(i);
+              const field = pdfDoc.context.lookup(fieldRef);
+              inspectField(field, i + 1, scriptsFound);
+            }
+          }
         } else if (debugMode) {
-          console.log('  Aucun JavaScript trouvé dans les champs de formulaire\n');
+          console.log('  Aucun champ trouvé dans /Fields\n');
         }
+      }
+
+      if (scriptsFound.length > 0) {
+        if (shouldSave) {
+          scriptsFound.forEach((script) => {
+            const fileName = `${pdfBaseName}_extract_${script.name}.js`;
+            const fixedCode = fixJavaScriptNewlines(script.code);
+            writeFileSync(fileName, fixedCode, 'utf-8');
+            console.log(`✅ Sauvegardé dans: ${fileName}`);
+          });
+          console.log();
+        }
+
+        console.log(`\n✅ ${scriptsFound.length} script(s) JavaScript trouvé(s) dans les champs de formulaire !`);
+        return;
       } else if (debugMode) {
-        console.log('  Aucun champ trouvé dans /AcroForm\n');
+        console.log('  Aucun JavaScript trouvé dans les champs de formulaire\n');
       }
     }
 
