@@ -117,7 +117,44 @@ function fixJavaScriptNewlines(code) {
   return result;
 }
 
-async function extractJavaScript(pdfPath, shouldSave = false) {
+/**
+ * Affiche la structure du Name Tree pour le debug
+ */
+function debugNameTree(nameTree, context) {
+  console.log('\n🔍 Mode Debug: Structure du Name Tree JavaScript\n');
+  console.log('Clés disponibles dans le Name Tree:');
+
+  const dict = nameTree.dict || nameTree;
+  if (dict && dict.entries) {
+    for (const [key, value] of dict.entries()) {
+      console.log(`  - ${key}`);
+    }
+  }
+
+  // Vérifier Names
+  const namesRef = nameTree.get(PDFName.of('Names'));
+  if (namesRef) {
+    console.log('\n✅ Trouvé: Names (structure directe)');
+    const names = context.lookup(namesRef);
+    console.log(`   Taille: ${names.size ? names.size() : 'N/A'} entrées`);
+  } else {
+    console.log('\n❌ Pas de Names direct');
+  }
+
+  // Vérifier Kids
+  const kidsRef = nameTree.get(PDFName.of('Kids'));
+  if (kidsRef) {
+    console.log('\n✅ Trouvé: Kids (structure avec sous-arbres)');
+    const kids = context.lookup(kidsRef);
+    console.log(`   Nombre de Kids: ${kids.size ? kids.size() : 'N/A'}`);
+  } else {
+    console.log('\n❌ Pas de Kids');
+  }
+
+  console.log('\n');
+}
+
+async function extractJavaScript(pdfPath, shouldSave = false, debugMode = false) {
   try {
     // Charger le PDF
     const existingPdfBytes = readFileSync(pdfPath);
@@ -151,14 +188,46 @@ async function extractJavaScript(pdfPath, shouldSave = false) {
 
     // Récupérer le Name Tree
     const nameTree = pdfDoc.context.lookup(javascriptRef);
-    const namesArrayRef = nameTree.get(PDFName.of('Names'));
 
-    if (!namesArrayRef) {
-      console.log('❌ Structure JavaScript invalide dans le PDF');
-      return;
+    // Mode debug: afficher la structure
+    if (debugMode) {
+      debugNameTree(nameTree, pdfDoc.context);
     }
 
-    const namesArray = pdfDoc.context.lookup(namesArrayRef);
+    // Essayer différentes structures de Name Tree
+    let namesArrayRef = nameTree.get(PDFName.of('Names'));
+    let namesArray = null;
+
+    if (namesArrayRef) {
+      // Structure classique avec tableau Names direct
+      namesArray = pdfDoc.context.lookup(namesArrayRef);
+    } else {
+      // Essayer la structure avec Kids (sous-arbres)
+      const kidsRef = nameTree.get(PDFName.of('Kids'));
+      if (kidsRef) {
+        const kids = pdfDoc.context.lookup(kidsRef);
+        if (kids && kids.size && kids.size() > 0) {
+          // Prendre le premier enfant et chercher Names dedans
+          const firstKidRef = kids.lookup(0);
+          const firstKid = pdfDoc.context.lookup(firstKidRef);
+          namesArrayRef = firstKid.get(PDFName.of('Names'));
+          if (namesArrayRef) {
+            namesArray = pdfDoc.context.lookup(namesArrayRef);
+          }
+        }
+      }
+    }
+
+    if (!namesArray) {
+      console.log('❌ Structure JavaScript non supportée dans ce PDF');
+      console.log('\n🔍 Informations de diagnostic :');
+      console.log('   Structure du Name Tree trouvée mais format non reconnu.');
+      console.log('\n💡 Solutions possibles :');
+      console.log('   1. Essayez avec un autre lecteur PDF pour régénérer le PDF');
+      console.log('   2. Ouvrez une issue sur GitHub avec votre fichier pour support');
+      console.log('   3. Le JavaScript peut être dans OpenAction ou dans les champs de formulaire\n');
+      return;
+    }
 
     // Parcourir les paires nom/référence
     const scriptsFound = [];
@@ -234,19 +303,23 @@ const args = process.argv.slice(2);
 
 if (args.length === 0) {
   console.log(`
-📖 Usage: node src/extract-js.js <chemin-du-pdf> [--save]
+📖 Usage: node src/extract-js.js <chemin-du-pdf> [options]
 
 Options:
-  --save    Sauvegarde les scripts extraits dans des fichiers .js
+  --save     Sauvegarde les scripts extraits dans des fichiers .js
+  --debug    Active le mode debug pour diagnostiquer les structures non supportées
 
-Exemple:
+Exemples:
   node src/extract-js.js sample.pdf
   node src/extract-js.js sample.pdf --save
+  node src/extract-js.js problematic.pdf --debug
+  node src/extract-js.js sample.pdf --save --debug
   `);
   process.exit(1);
 }
 
 const pdfPath = args[0];
 const shouldSave = args.includes('--save');
+const debugMode = args.includes('--debug');
 
-extractJavaScript(pdfPath, shouldSave);
+extractJavaScript(pdfPath, shouldSave, debugMode);

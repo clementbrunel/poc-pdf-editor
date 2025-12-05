@@ -55,9 +55,17 @@ npm run extract sample.pdf
 #### Options :
 
 - **`--save`** : Sauvegarde les scripts extraits dans des fichiers `.js`
+- **`--debug`** : Active le mode debug pour diagnostiquer les structures non supportées
 
 ```bash
+# Sauvegarder les scripts extraits
 node src/extract-js.js sample.pdf --save
+
+# Mode debug pour diagnostiquer les problèmes
+node src/extract-js.js problematic.pdf --debug
+
+# Combiner les deux options
+node src/extract-js.js sample.pdf --save --debug
 ```
 
 #### Exemple de sortie :
@@ -202,6 +210,26 @@ Pour plus d'informations : [Adobe Acrobat JavaScript Reference](https://www.adob
 
 ## 🔧 Dépannage
 
+### Erreur : "Structure JavaScript invalide"
+
+Si vous obtenez cette erreur avec un PDF qui fonctionne en production :
+
+1. **Utilisez le mode debug** pour voir la structure :
+   ```bash
+   node src/extract-js.js votre-fichier.pdf --debug
+   ```
+
+2. **Structures supportées** :
+   - ✅ Name Tree avec tableau `Names` direct
+   - ✅ Name Tree avec sous-arbres `Kids`
+   - ❌ JavaScript dans `OpenAction` (non encore supporté)
+   - ❌ JavaScript dans les champs de formulaire (non encore supporté)
+
+3. **Solutions** :
+   - Regardez la sortie du mode debug pour comprendre la structure
+   - Ouvrez une issue sur GitHub avec les informations de debug
+   - Essayez de régénérer le PDF avec Adobe Acrobat
+
 ### Erreur : "Aucun JavaScript trouvé"
 
 - Vérifiez que le PDF contient réellement du JavaScript
@@ -213,6 +241,13 @@ Pour plus d'informations : [Adobe Acrobat JavaScript Reference](https://www.adob
 - Assurez-vous que le fichier PDF n'est pas corrompu
 - Vérifiez que le chemin du fichier est correct
 - Certains PDFs protégés ou chiffrés peuvent ne pas fonctionner
+
+### Le fichier .js extrait a des erreurs de syntaxe
+
+Cela ne devrait plus arriver avec la dernière version. Si c'est le cas :
+- Vérifiez que vous utilisez la dernière version du code
+- Le script échappe automatiquement les retours à la ligne dans les chaînes
+- Testez avec `node -c fichier_extract.js` pour valider la syntaxe
 
 ## 📝 License
 
