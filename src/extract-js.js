@@ -243,11 +243,65 @@ async function extractJavaScript(pdfPath, shouldSave = false, debugMode = false)
     // Accéder au catalogue du document
     const catalog = pdfDoc.context.lookup(pdfDoc.context.trailerInfo.Root);
 
+    // Chercher le JavaScript dans OpenAction (action à l'ouverture)
+    const openActionRef = catalog.get(PDFName.of('OpenAction'));
+    if (openActionRef) {
+      console.log('🔍 OpenAction trouvé, vérification du JavaScript...\n');
+      const openAction = pdfDoc.context.lookup(openActionRef);
+
+      if (debugMode) {
+        console.log('Type de OpenAction:', openAction.constructor.name);
+        console.log('Contenu:', openAction.toString());
+      }
+
+      // Vérifier si c'est une action JavaScript
+      const sRef = openAction.get(PDFName.of('S'));
+      if (sRef) {
+        const actionType = pdfDoc.context.lookup(sRef);
+        const actionTypeStr = actionType.asString ? actionType.asString() : actionType.toString();
+
+        if (actionTypeStr === '/JavaScript' || actionTypeStr === 'JavaScript') {
+          const jsRef = openAction.get(PDFName.of('JS'));
+          if (jsRef) {
+            const jsCode = pdfDoc.context.lookup(jsRef);
+            let code = '';
+
+            if (jsCode && typeof jsCode.decodeText === 'function') {
+              code = jsCode.decodeText();
+            } else if (jsCode && jsCode.asString) {
+              code = jsCode.asString();
+            }
+
+            if (code) {
+              code = code.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+              console.log(`\n${'='.repeat(60)}`);
+              console.log(`📜 Script: OpenAction`);
+              console.log(`${'='.repeat(60)}\n`);
+              console.log(code);
+              console.log(`\n${'='.repeat(60)}\n`);
+
+              if (shouldSave) {
+                const fileName = `${pdfBaseName}_extract.js`;
+                const fixedCode = fixJavaScriptNewlines(code);
+                writeFileSync(fileName, fixedCode, 'utf-8');
+                console.log(`✅ Sauvegardé dans: ${fileName}\n`);
+              }
+
+              console.log(`\n✅ JavaScript trouvé dans OpenAction !`);
+              return;
+            }
+          }
+        }
+      }
+    }
+
     // Chercher les JavaScripts dans le Names dictionary
     const namesRef = catalog.get(PDFName.of('Names'));
 
     if (!namesRef) {
       console.log('❌ Aucun dictionnaire Names trouvé dans ce PDF');
+      console.log('❌ Aucun OpenAction avec JavaScript trouvé');
       console.log('ℹ️  Ce PDF ne contient probablement pas de JavaScript');
       return;
     }
@@ -257,7 +311,8 @@ async function extractJavaScript(pdfPath, shouldSave = false, debugMode = false)
 
     if (!javascriptRef) {
       console.log('❌ Aucune entrée JavaScript trouvée dans le dictionnaire Names');
-      console.log('ℹ️  Ce PDF ne contient pas de JavaScript');
+      console.log('❌ Aucun OpenAction avec JavaScript trouvé');
+      console.log('ℹ️  Ce PDF ne contient pas de JavaScript dans les emplacements standards');
       return;
     }
 
