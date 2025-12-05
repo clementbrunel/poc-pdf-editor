@@ -122,13 +122,37 @@ function fixJavaScriptNewlines(code) {
  */
 function debugNameTree(nameTree, context) {
   console.log('\n🔍 Mode Debug: Structure du Name Tree JavaScript\n');
-  console.log('Clés disponibles dans le Name Tree:');
+  console.log('Type de l\'objet:', nameTree.constructor.name);
 
+  // Afficher les clés disponibles
+  console.log('\nClés disponibles dans le Name Tree:');
   const dict = nameTree.dict || nameTree;
+  let hasKeys = false;
+
   if (dict && dict.entries) {
     for (const [key, value] of dict.entries()) {
       console.log(`  - ${key}`);
+      hasKeys = true;
     }
+  }
+
+  if (!hasKeys) {
+    console.log('  (aucune clé trouvée via entries())');
+  }
+
+  // Essayer d'accéder directement au dictionnaire
+  console.log('\nContenu brut du Name Tree:');
+  try {
+    if (nameTree.dict) {
+      console.log('  nameTree.dict existe');
+      console.log('  Clés du dict:', Object.keys(nameTree.dict));
+    }
+    if (nameTree.map) {
+      console.log('  nameTree.map existe');
+      console.log('  Taille de la map:', nameTree.map.size);
+    }
+  } catch (e) {
+    console.log('  Erreur lors de l\'inspection:', e.message);
   }
 
   // Vérifier Names
@@ -136,6 +160,7 @@ function debugNameTree(nameTree, context) {
   if (namesRef) {
     console.log('\n✅ Trouvé: Names (structure directe)');
     const names = context.lookup(namesRef);
+    console.log(`   Type: ${names.constructor.name}`);
     console.log(`   Taille: ${names.size ? names.size() : 'N/A'} entrées`);
   } else {
     console.log('\n❌ Pas de Names direct');
@@ -146,9 +171,31 @@ function debugNameTree(nameTree, context) {
   if (kidsRef) {
     console.log('\n✅ Trouvé: Kids (structure avec sous-arbres)');
     const kids = context.lookup(kidsRef);
+    console.log(`   Type: ${kids.constructor.name}`);
     console.log(`   Nombre de Kids: ${kids.size ? kids.size() : 'N/A'}`);
   } else {
     console.log('\n❌ Pas de Kids');
+  }
+
+  // Essayer d'autres clés communes
+  console.log('\n🔎 Vérification d\'autres structures possibles:');
+
+  // Vérifier si c'est un objet action directement
+  const sRef = nameTree.get(PDFName.of('S'));
+  if (sRef) {
+    const s = context.lookup(sRef);
+    console.log(`  - /S trouvé: ${s.asString ? s.asString() : s.toString()}`);
+  }
+
+  const jsRef = nameTree.get(PDFName.of('JS'));
+  if (jsRef) {
+    console.log('  - /JS trouvé directement dans le Name Tree !');
+    const js = context.lookup(jsRef);
+    console.log(`    Type: ${js.constructor.name}`);
+    if (js.decodeText) {
+      const code = js.decodeText();
+      console.log(`    Taille du code: ${code.length} caractères`);
+    }
   }
 
   console.log('\n');
