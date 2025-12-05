@@ -243,8 +243,28 @@ async function extractJavaScript(pdfPath, shouldSave = false, debugMode = false)
     // Accéder au catalogue du document
     const catalog = pdfDoc.context.lookup(pdfDoc.context.trailerInfo.Root);
 
+    if (debugMode) {
+      console.log('🔍 Inspection du catalogue PDF\n');
+      console.log('Clés du catalogue:');
+      if (catalog.dict && catalog.dict.entries) {
+        for (const [key, value] of catalog.dict.entries()) {
+          console.log(`  - ${key}`);
+        }
+      }
+      console.log();
+    }
+
     // Chercher le JavaScript dans OpenAction (action à l'ouverture)
     const openActionRef = catalog.get(PDFName.of('OpenAction'));
+
+    if (debugMode) {
+      console.log('Vérification de OpenAction:', openActionRef ? '✅ Existe' : '❌ Absent');
+      if (openActionRef) {
+        console.log('Type de OpenAction ref:', openActionRef.constructor.name);
+      }
+      console.log();
+    }
+
     if (openActionRef) {
       console.log('🔍 OpenAction trouvé, vérification du JavaScript...\n');
       const openAction = pdfDoc.context.lookup(openActionRef);
