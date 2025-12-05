@@ -265,23 +265,19 @@ async function extractJavaScript(pdfPath, shouldSave = false, debugMode = false)
       console.log();
     }
 
-    if (openActionRef) {
-      console.log('🔍 OpenAction trouvé, vérification du JavaScript...\n');
-      const openAction = pdfDoc.context.lookup(openActionRef);
-
-      if (debugMode) {
-        console.log('Type de OpenAction:', openAction.constructor.name);
-        console.log('Contenu:', openAction.toString());
-      }
-
-      // Vérifier si c'est une action JavaScript
-      const sRef = openAction.get(PDFName.of('S'));
+    // Fonction helper pour extraire JavaScript depuis une action
+    const extractJSFromAction = (action, actionName) => {
+      const sRef = action.get(PDFName.of('S'));
       if (sRef) {
         const actionType = pdfDoc.context.lookup(sRef);
         const actionTypeStr = actionType.asString ? actionType.asString() : actionType.toString();
 
+        if (debugMode) {
+          console.log(`  Type d'action: ${actionTypeStr}`);
+        }
+
         if (actionTypeStr === '/JavaScript' || actionTypeStr === 'JavaScript') {
-          const jsRef = openAction.get(PDFName.of('JS'));
+          const jsRef = action.get(PDFName.of('JS'));
           if (jsRef) {
             const jsCode = pdfDoc.context.lookup(jsRef);
             let code = '';
@@ -293,26 +289,96 @@ async function extractJavaScript(pdfPath, shouldSave = false, debugMode = false)
             }
 
             if (code) {
-              code = code.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-
-              console.log(`\n${'='.repeat(60)}`);
-              console.log(`📜 Script: OpenAction`);
-              console.log(`${'='.repeat(60)}\n`);
-              console.log(code);
-              console.log(`\n${'='.repeat(60)}\n`);
-
-              if (shouldSave) {
-                const fileName = `${pdfBaseName}_extract.js`;
-                const fixedCode = fixJavaScriptNewlines(code);
-                writeFileSync(fileName, fixedCode, 'utf-8');
-                console.log(`✅ Sauvegardé dans: ${fileName}\n`);
-              }
-
-              console.log(`\n✅ JavaScript trouvé dans OpenAction !`);
-              return;
+              return code.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
             }
           }
         }
+      }
+      return null;
+    };
+
+    if (openActionRef) {
+      console.log('🔍 OpenAction trouvé, vérification du JavaScript...\n');
+      const openAction = pdfDoc.context.lookup(openActionRef);
+
+      if (debugMode) {
+        console.log('Type de OpenAction:', openAction.constructor.name);
+        console.log('Contenu:', openAction.toString());
+      }
+
+      const code = extractJSFromAction(openAction, 'OpenAction');
+      if (code) {
+        console.log(`\n${'='.repeat(60)}`);
+        console.log(`📜 Script: OpenAction`);
+        console.log(`${'='.repeat(60)}\n`);
+        console.log(code);
+        console.log(`\n${'='.repeat(60)}\n`);
+
+        if (shouldSave) {
+          const fileName = `${pdfBaseName}_extract.js`;
+          const fixedCode = fixJavaScriptNewlines(code);
+          writeFileSync(fileName, fixedCode, 'utf-8');
+          console.log(`✅ Sauvegardé dans: ${fileName}\n`);
+        }
+
+        console.log(`\n✅ JavaScript trouvé dans OpenAction !`);
+        return;
+      }
+    }
+
+    // Chercher le JavaScript dans Additional Actions (/AA)
+    const aaRef = catalog.get(PDFName.of('AA'));
+    if (aaRef) {
+      console.log('🔍 Additional Actions (/AA) trouvé, vérification du JavaScript...\n');
+      const aa = pdfDoc.context.lookup(aaRef);
+
+      if (debugMode) {
+        console.log('Type de AA:', aa.constructor.name);
+        console.log('Contenu:', aa.toString());
+        console.log();
+      }
+
+      // Actions possibles dans /AA
+      const actionTypes = ['WC', 'WS', 'DS', 'WP', 'DP', 'WillClose', 'WillSave', 'DidSave', 'WillPrint', 'DidPrint'];
+      const scriptsFound = [];
+
+      for (const actionType of actionTypes) {
+        const actionRef = aa.get(PDFName.of(actionType));
+        if (actionRef) {
+          if (debugMode) {
+            console.log(`  Vérification de /${actionType}...`);
+          }
+
+          const action = pdfDoc.context.lookup(actionRef);
+          const code = extractJSFromAction(action, actionType);
+
+          if (code) {
+            scriptsFound.push({ name: actionType, code });
+            console.log(`\n${'='.repeat(60)}`);
+            console.log(`📜 Script: ${actionType}`);
+            console.log(`${'='.repeat(60)}\n`);
+            console.log(code);
+            console.log(`\n${'='.repeat(60)}\n`);
+          }
+        }
+      }
+
+      if (scriptsFound.length > 0) {
+        if (shouldSave) {
+          scriptsFound.forEach((script, index) => {
+            const suffix = scriptsFound.length > 1 ? `_extract_${script.name}` : '_extract';
+            const fileName = `${pdfBaseName}${suffix}.js`;
+            const fixedCode = fixJavaScriptNewlines(script.code);
+            writeFileSync(fileName, fixedCode, 'utf-8');
+            console.log(`✅ Sauvegardé dans: ${fileName}`);
+          });
+          console.log();
+        }
+
+        console.log(`\n✅ ${scriptsFound.length} script(s) JavaScript trouvé(s) dans Additional Actions !`);
+        return;
+      } else if (debugMode) {
+        console.log('  Aucun JavaScript trouvé dans les Additional Actions\n');
       }
     }
 
