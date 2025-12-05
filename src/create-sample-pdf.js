@@ -166,9 +166,9 @@ console.println("Pages: " + info.pages);
     console.log(`   - Taille du JavaScript: ${sampleJavaScript.length} caractères`);
     console.log(`   - Nom du script: SampleScript`);
     console.log(`\n🚀 Prochaines étapes:`);
-    console.log(`   1. Extraire le JavaScript: npm run extract ${outputPath}`);
-    console.log(`   2. Modifier le code et sauvegarder dans un fichier .js`);
-    console.log(`   3. Créer un PDF modifié: npm run edit ${outputPath} custom.js output.pdf`);
+    console.log(`   1. Extraire le JavaScript: npm run extract ${outputPath} -- --save`);
+    console.log(`   2. Modifier le code extrait (ex: sample_extract.js → sample_custom.js)`);
+    console.log(`   3. Créer un PDF modifié: npm run edit ${outputPath} sample_custom.js sample-custom.pdf`);
     console.log();
 
   } catch (error) {

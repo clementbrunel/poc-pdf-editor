@@ -6,6 +6,117 @@ import { PDFDocument, PDFName } from 'pdf-lib';
  * Usage: node src/extract-js.js <chemin-du-pdf> [--save]
  */
 
+/**
+ * Corrige les retours à la ligne dans les chaînes de caractères JavaScript
+ * pour s'assurer que le code extrait est syntaxiquement valide
+ */
+function fixJavaScriptNewlines(code) {
+  let result = '';
+  let i = 0;
+  let inString = false;
+  let stringChar = null;
+  let escaped = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  while (i < code.length) {
+    const char = code[i];
+    const nextChar = code[i + 1];
+
+    // Gérer la fin des commentaires de ligne
+    if (inLineComment && char === '\n') {
+      inLineComment = false;
+      result += char;
+      i++;
+      continue;
+    }
+
+    // Si on est dans un commentaire de ligne, copier tel quel
+    if (inLineComment) {
+      result += char;
+      i++;
+      continue;
+    }
+
+    // Gérer la fin des commentaires de bloc
+    if (inBlockComment && char === '*' && nextChar === '/') {
+      result += char + nextChar;
+      inBlockComment = false;
+      i += 2;
+      continue;
+    }
+
+    // Si on est dans un commentaire de bloc, copier tel quel
+    if (inBlockComment) {
+      result += char;
+      i++;
+      continue;
+    }
+
+    // Détecter le début d'un commentaire (seulement si on n'est pas dans une chaîne)
+    if (!inString && char === '/' && nextChar === '/') {
+      inLineComment = true;
+      result += char;
+      i++;
+      continue;
+    }
+
+    if (!inString && char === '/' && nextChar === '*') {
+      inBlockComment = true;
+      result += char;
+      i++;
+      continue;
+    }
+
+    // Gérer les échappements dans les chaînes
+    if (inString && escaped) {
+      result += char;
+      escaped = false;
+      i++;
+      continue;
+    }
+
+    // Si on rencontre un backslash dans une chaîne
+    if (inString && char === '\\') {
+      result += char;
+      escaped = true;
+      i++;
+      continue;
+    }
+
+    // Détecter le début/fin d'une chaîne (guillemets simples ou doubles)
+    if ((char === '"' || char === "'") && !inString) {
+      inString = true;
+      stringChar = char;
+      result += char;
+      i++;
+      continue;
+    }
+
+    if (char === stringChar && inString && !escaped) {
+      inString = false;
+      stringChar = null;
+      result += char;
+      i++;
+      continue;
+    }
+
+    // Si on est dans une chaîne et qu'on rencontre un retour à la ligne
+    if (inString && char === '\n') {
+      // Échapper le retour à la ligne
+      result += '\\n';
+      i++;
+      continue;
+    }
+
+    // Pour tous les autres caractères
+    result += char;
+    i++;
+  }
+
+  return result;
+}
+
 async function extractJavaScript(pdfPath, shouldSave = false) {
   try {
     // Charger le PDF
@@ -13,6 +124,9 @@ async function extractJavaScript(pdfPath, shouldSave = false) {
     const pdfDoc = await PDFDocument.load(existingPdfBytes);
 
     console.log(`\n📄 Analyse du PDF: ${pdfPath}\n`);
+
+    // Extraire le nom de base du PDF pour nommer les fichiers extraits
+    const pdfBaseName = pdfPath.replace(/\.pdf$/i, '').replace(/^.*[\/\\]/, '');
 
     // Accéder au catalogue du document
     const catalog = pdfDoc.context.lookup(pdfDoc.context.trailerInfo.Root);
@@ -60,11 +174,16 @@ async function extractJavaScript(pdfPath, shouldSave = false) {
           const jsCode = pdfDoc.context.lookup(jsAction);
           let code = '';
 
+          // Essayer différentes méthodes de décodage
           if (jsCode && typeof jsCode.decodeText === 'function') {
             code = jsCode.decodeText();
           } else if (jsCode && jsCode.asString) {
             code = jsCode.asString();
           }
+
+          // Nettoyer le code pour éviter les problèmes d'encodage
+          // Normaliser les retours à la ligne
+          code = code.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
           const name = scriptName.asString ? scriptName.asString() : `Script ${i / 2 + 1}`;
 
@@ -78,8 +197,17 @@ async function extractJavaScript(pdfPath, shouldSave = false) {
 
           // Sauvegarder si demandé
           if (shouldSave) {
-            const fileName = `extracted_${name.replace(/[^a-zA-Z0-9]/g, '_')}.js`;
-            writeFileSync(fileName, code);
+            // Générer le nom du fichier basé sur le PDF source
+            // Ex: sample.pdf → sample_extract.js (pour le premier script)
+            const scriptIndex = scriptsFound.length;
+            const suffix = scriptIndex > 1 ? `_extract${scriptIndex}` : '_extract';
+            const fileName = `${pdfBaseName}${suffix}.js`;
+
+            // Corriger le code pour qu'il soit valide en JavaScript
+            // Échapper les retours à la ligne dans les chaînes de caractères
+            let fixedCode = fixJavaScriptNewlines(code);
+
+            writeFileSync(fileName, fixedCode, 'utf-8');
             console.log(`✅ Sauvegardé dans: ${fileName}\n`);
           }
         }

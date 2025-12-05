@@ -88,7 +88,7 @@ app.alert({
 Pour remplacer ou ajouter du JavaScript dans un PDF :
 
 ```bash
-npm run edit sample.pdf mon-script.js output.pdf
+npm run edit sample.pdf sample_custom.js sample-custom.pdf
 ```
 
 #### Paramètres :
@@ -105,15 +105,15 @@ npm run edit sample.pdf mon-script.js output.pdf
 npm run create-sample
 
 # Étape 2 : Extraire le JavaScript
-npm run extract sample.pdf --save
+npm run extract sample.pdf -- --save
 
-# Étape 3 : Modifier le fichier extracted_SampleScript.js
+# Étape 3 : Modifier le fichier sample_extract.js et le sauvegarder en sample_custom.js
 
 # Étape 4 : Créer un nouveau PDF avec le JavaScript modifié
-npm run edit sample.pdf extracted_SampleScript.js custom-output.pdf
+npm run edit sample.pdf sample_custom.js sample-custom.pdf
 
 # Étape 5 : Vérifier le résultat
-npm run extract custom-output.pdf
+npm run extract sample-custom.pdf
 ```
 
 ## 📂 Structure du projet
@@ -124,6 +124,7 @@ poc-pdf-editor/
 │   ├── extract-js.js         # Extraction du JavaScript
 │   ├── edit-js.js             # Édition et création de PDF
 │   └── create-sample-pdf.js   # Création d'exemples
+├── sample_custom.js           # Exemple de JavaScript personnalisé
 ├── package.json
 └── README.md
 ```
@@ -132,7 +133,7 @@ poc-pdf-editor/
 
 ### Exemple 1 : Modifier un message d'alerte
 
-1. Créer un fichier `custom-alert.js` :
+1. Créer un fichier `sample_custom.js` :
 
 ```javascript
 app.alert({
@@ -147,7 +148,7 @@ console.println("PDF personnalisé chargé !");
 2. Créer un nouveau PDF :
 
 ```bash
-npm run edit sample.pdf custom-alert.js my-custom.pdf MyAlert
+npm run edit sample.pdf sample_custom.js sample-custom.pdf MyAlert
 ```
 
 ### Exemple 2 : Ajouter des fonctionnalités interactives
@@ -177,7 +178,7 @@ this.addScript("MonScript", "app.alert('Action personnalisée !');");
 2. Intégrer dans un PDF :
 
 ```bash
-npm run edit sample.pdf interactive.js interactive-doc.pdf
+npm run edit sample.pdf interactive.js interactive-custom.pdf
 ```
 
 ## 📚 API JavaScript PDF (Acrobat)

@@ -139,7 +139,13 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
 # PDF Editor generated files
-*.pdf
+# Fichiers générés lors des tests
+sample.pdf
+sample_extract.js
+sample-custom.pdf
+sample-custom_extract*.js
+test-*.pdf
 extracted_*.js
 output.pdf
-sample.pdf
+
+# Garder sample_custom.js qui est un exemple dans le repo
