@@ -146,10 +146,38 @@ function debugNameTree(nameTree, context) {
     if (nameTree.dict) {
       console.log('  nameTree.dict existe');
       console.log('  Clés du dict:', Object.keys(nameTree.dict));
+
+      // Essayer d'accéder aux propriétés internes
+      console.log('  Propriétés de nameTree:', Object.keys(nameTree));
+      console.log('  toString():', nameTree.toString());
     }
     if (nameTree.map) {
       console.log('  nameTree.map existe');
       console.log('  Taille de la map:', nameTree.map.size);
+
+      // Afficher les clés de la map
+      if (nameTree.map.size > 0) {
+        console.log('  Clés de la map:');
+        for (const [key, value] of nameTree.map.entries()) {
+          console.log(`    - ${key}: ${value}`);
+        }
+      }
+    }
+
+    // Essayer d'itérer sur toutes les propriétés
+    console.log('\n  Tentative d\'accès direct aux clés PDF:');
+    const possibleKeys = ['Names', 'Kids', 'D', 'Limits', 'JS', 'S'];
+    for (const key of possibleKeys) {
+      try {
+        const value = nameTree.get(PDFName.of(key));
+        if (value) {
+          console.log(`    /${key} existe !`);
+          const resolved = context.lookup(value);
+          console.log(`      Type: ${resolved.constructor.name}`);
+        }
+      } catch (e) {
+        // Ignorer
+      }
     }
   } catch (e) {
     console.log('  Erreur lors de l\'inspection:', e.message);
