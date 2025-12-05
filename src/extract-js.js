@@ -315,14 +315,13 @@ async function extractJavaScript(pdfPath, shouldSave = false, debugMode = false)
         console.log(`\n${'='.repeat(60)}\n`);
 
         if (shouldSave) {
-          const fileName = `${pdfBaseName}_extract.js`;
+          const fileName = `${pdfBaseName}_extract_OpenAction.js`;
           const fixedCode = fixJavaScriptNewlines(code);
           writeFileSync(fileName, fixedCode, 'utf-8');
-          console.log(`✅ Sauvegardé dans: ${fileName}\n`);
+          console.log(`✅ Sauvegardé: ${fileName}\n`);
         }
 
-        console.log(`\n✅ JavaScript trouvé dans OpenAction !`);
-        return;
+        console.log(`\n✅ JavaScript trouvé dans OpenAction\n`);
       }
     }
 
@@ -377,19 +376,17 @@ async function extractJavaScript(pdfPath, shouldSave = false, debugMode = false)
       }
 
       if (scriptsFound.length > 0) {
+        console.log(`\n✅ ${scriptsFound.length} script(s) JavaScript trouvé(s) dans Additional Actions\n`);
+
         if (shouldSave) {
           scriptsFound.forEach((script, index) => {
-            const suffix = scriptsFound.length > 1 ? `_extract_${script.name}` : '_extract';
-            const fileName = `${pdfBaseName}${suffix}.js`;
+            const fileName = `${pdfBaseName}_extract_${script.name}.js`;
             const fixedCode = fixJavaScriptNewlines(script.code);
             writeFileSync(fileName, fixedCode, 'utf-8');
-            console.log(`✅ Sauvegardé dans: ${fileName}`);
+            console.log(`✅ Sauvegardé: ${fileName}`);
           });
           console.log();
         }
-
-        console.log(`\n✅ ${scriptsFound.length} script(s) JavaScript trouvé(s) dans Additional Actions !`);
-        return;
       } else if (debugMode) {
         console.log('  Aucun JavaScript trouvé dans les Additional Actions\n');
       }
@@ -543,20 +540,148 @@ async function extractJavaScript(pdfPath, shouldSave = false, debugMode = false)
       }
 
       if (scriptsFound.length > 0) {
+        console.log(`\n✅ ${scriptsFound.length} script(s) JavaScript trouvé(s) dans les champs de formulaire\n`);
+
         if (shouldSave) {
           scriptsFound.forEach((script) => {
             const fileName = `${pdfBaseName}_extract_${script.name}.js`;
             const fixedCode = fixJavaScriptNewlines(script.code);
             writeFileSync(fileName, fixedCode, 'utf-8');
-            console.log(`✅ Sauvegardé dans: ${fileName}`);
+            console.log(`✅ Sauvegardé: ${fileName}`);
           });
           console.log();
         }
-
-        console.log(`\n✅ ${scriptsFound.length} script(s) JavaScript trouvé(s) dans les champs de formulaire !`);
-        return;
       } else if (debugMode) {
         console.log('  Aucun JavaScript trouvé dans les champs de formulaire\n');
+      }
+    }
+
+    // Chercher les boutons et annotations sur les pages
+    console.log('🔍 Recherche des boutons et annotations sur les pages...\n');
+    const pagesRef = catalog.get(PDFName.of('Pages'));
+    if (pagesRef) {
+      const pagesRoot = pdfDoc.context.lookup(pagesRef);
+      const scriptsFound = [];
+
+      // Fonction récursive pour parcourir l'arbre des pages
+      const scanPageTree = (pageTreeNode, pageNum = 0) => {
+        const typeRef = pageTreeNode.get(PDFName.of('Type'));
+        const type = typeRef ? pdfDoc.context.lookup(typeRef).toString() : null;
+
+        if (type === '/Pages') {
+          // C'est un nœud intermédiaire, parcourir les enfants
+          const kidsRef = pageTreeNode.get(PDFName.of('Kids'));
+          if (kidsRef) {
+            const kids = pdfDoc.context.lookup(kidsRef);
+            if (kids && kids.size && kids.size() > 0) {
+              for (let i = 0; i < kids.size(); i++) {
+                const kidRef = kids.lookup(i);
+                const kid = pdfDoc.context.lookup(kidRef);
+                pageNum = scanPageTree(kid, pageNum);
+              }
+            }
+          }
+        } else if (type === '/Page') {
+          // C'est une page, chercher les annotations
+          pageNum++;
+          const annotsRef = pageTreeNode.get(PDFName.of('Annots'));
+
+          if (annotsRef) {
+            const annots = pdfDoc.context.lookup(annotsRef);
+
+            if (debugMode) {
+              console.log(`  Page ${pageNum}: ${annots.size ? annots.size() : 0} annotation(s)`);
+            }
+
+            if (annots && annots.size && annots.size() > 0) {
+              for (let j = 0; j < annots.size(); j++) {
+                const annotRef = annots.lookup(j);
+                const annot = pdfDoc.context.lookup(annotRef);
+
+                // Obtenir le sous-type de l'annotation
+                const subtypeRef = annot.get(PDFName.of('Subtype'));
+                const subtype = subtypeRef ? pdfDoc.context.lookup(subtypeRef).toString() : null;
+
+                // Obtenir le nom de l'annotation (si disponible)
+                const tRef = annot.get(PDFName.of('T'));
+                const annotName = tRef ? pdfDoc.context.lookup(tRef).decodeText?.() || `Annot${j + 1}` : `Annot${j + 1}`;
+
+                if (debugMode) {
+                  console.log(`    Annotation ${j + 1}: ${annotName} (${subtype})`);
+                }
+
+                // Chercher les actions sur l'annotation
+                const actionRef = annot.get(PDFName.of('A'));
+                if (actionRef) {
+                  const action = pdfDoc.context.lookup(actionRef);
+                  const code = extractJSFromAction(action, `Page${pageNum}_${annotName}_Action`);
+
+                  if (code) {
+                    scriptsFound.push({ name: `Page${pageNum}_${annotName}_Action`, code });
+
+                    console.log(`\n${'='.repeat(60)}`);
+                    console.log(`📜 Script: Page ${pageNum} - ${annotName} (Action)`);
+                    console.log(`${'='.repeat(60)}\n`);
+                    console.log(code);
+                    console.log(`\n${'='.repeat(60)}\n`);
+                  }
+                }
+
+                // Chercher les Additional Actions sur l'annotation
+                const aaRef = annot.get(PDFName.of('AA'));
+                if (aaRef) {
+                  const aa = pdfDoc.context.lookup(aaRef);
+
+                  if (debugMode) {
+                    console.log(`      /AA trouvé sur cette annotation`);
+                  }
+
+                  // Actions possibles sur une annotation
+                  const annotActionTypes = ['E', 'X', 'D', 'U', 'Fo', 'Bl', 'PO', 'PC', 'PV', 'PI'];
+                  // E = Enter, X = Exit, D = MouseDown, U = MouseUp, Fo = Focus, Bl = Blur
+
+                  for (const actionType of annotActionTypes) {
+                    const annotActionRef = aa.get(PDFName.of(actionType));
+                    if (annotActionRef) {
+                      const annotAction = pdfDoc.context.lookup(annotActionRef);
+                      const code = extractJSFromAction(annotAction, `Page${pageNum}_${annotName}_${actionType}`);
+
+                      if (code) {
+                        scriptsFound.push({ name: `Page${pageNum}_${annotName}_${actionType}`, code });
+
+                        console.log(`\n${'='.repeat(60)}`);
+                        console.log(`📜 Script: Page ${pageNum} - ${annotName} (${actionType})`);
+                        console.log(`${'='.repeat(60)}\n`);
+                        console.log(code);
+                        console.log(`\n${'='.repeat(60)}\n`);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        return pageNum;
+      };
+
+      scanPageTree(pagesRoot);
+
+      if (scriptsFound.length > 0) {
+        console.log(`\n✅ ${scriptsFound.length} script(s) JavaScript trouvé(s) dans les annotations des pages\n`);
+
+        if (shouldSave) {
+          scriptsFound.forEach((script) => {
+            const fileName = `${pdfBaseName}_extract_${script.name}.js`;
+            const fixedCode = fixJavaScriptNewlines(script.code);
+            writeFileSync(fileName, fixedCode, 'utf-8');
+            console.log(`✅ Sauvegardé: ${fileName}`);
+          });
+          console.log();
+        }
+      } else if (debugMode) {
+        console.log('  Aucun JavaScript trouvé dans les annotations des pages\n');
       }
     }
 
