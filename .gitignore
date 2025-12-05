@@ -137,3 +137,9 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# PDF Editor generated files
+*.pdf
+extracted_*.js
+output.pdf
+sample.pdf

@@ -1,0 +1,23 @@
+{
+  "name": "poc-pdf-editor",
+  "version": "1.0.0",
+  "description": "POC pour visualiser et éditer le JavaScript dans les PDFs",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "extract": "node src/extract-js.js",
+    "edit": "node src/edit-js.js",
+    "create-sample": "node src/create-sample-pdf.js"
+  },
+  "keywords": [
+    "pdf",
+    "javascript",
+    "editor",
+    "pdf-lib"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "pdf-lib": "^1.17.1"
+  }
+}
