@@ -229,16 +229,57 @@ function debugNameTree(nameTree, context) {
   console.log('\n');
 }
 
-async function extractJavaScript(pdfPath, shouldSave = false, debugMode = false) {
+async function extractJavaScript(pdfPath, shouldSave = false, debugMode = false, listOnly = false, grepPattern = null, filterName = null) {
   try {
     // Charger le PDF
     const existingPdfBytes = readFileSync(pdfPath);
     const pdfDoc = await PDFDocument.load(existingPdfBytes);
 
-    console.log(`\n📄 Analyse du PDF: ${pdfPath}\n`);
+    console.log(`📄 ${pdfPath}\n`);
 
     // Extraire le nom de base du PDF pour nommer les fichiers extraits
     const pdfBaseName = pdfPath.replace(/\.pdf$/i, '').replace(/^.*[\/\\]/, '');
+
+    // Tableau pour collecter tous les scripts trouvés
+    const allScripts = [];
+
+    // Fonction helper pour afficher et collecter les scripts
+    const displayAndCollectScript = (name, code, category) => {
+      // Appliquer les filtres
+      if (filterName && !name.toLowerCase().includes(filterName.toLowerCase())) {
+        return false;
+      }
+
+      if (grepPattern) {
+        const regex = new RegExp(grepPattern, 'i');
+        if (!regex.test(code)) {
+          return false;
+        }
+      }
+
+      // Collecter le script
+      allScripts.push({ name, code, category });
+
+      // Affichage compact
+      if (!listOnly) {
+        const preview = code.substring(0, 100).replace(/\n/g, ' ');
+        console.log(`📜 ${name}`);
+        if (grepPattern) {
+          // Afficher la ligne qui matche
+          const lines = code.split('\n');
+          const matchingLine = lines.find(line => new RegExp(grepPattern, 'i').test(line));
+          if (matchingLine) {
+            console.log(`   ↳ ${matchingLine.trim().substring(0, 80)}`);
+          }
+        } else {
+          console.log(`   ↳ ${preview}${code.length > 100 ? '...' : ''}`);
+        }
+      } else {
+        console.log(`  ${name} (${code.length} chars)`);
+      }
+
+      return true;
+    };
 
     // Accéder au catalogue du document
     const catalog = pdfDoc.context.lookup(pdfDoc.context.trailerInfo.Root);
@@ -308,124 +349,55 @@ async function extractJavaScript(pdfPath, shouldSave = false, debugMode = false)
 
       const code = extractJSFromAction(openAction, 'OpenAction');
       if (code) {
-        console.log(`\n${'='.repeat(60)}`);
-        console.log(`📜 Script: OpenAction`);
-        console.log(`${'='.repeat(60)}\n`);
-        console.log(code);
-        console.log(`\n${'='.repeat(60)}\n`);
-
-        if (shouldSave) {
-          const fileName = `${pdfBaseName}_extract_OpenAction.js`;
-          const fixedCode = fixJavaScriptNewlines(code);
-          writeFileSync(fileName, fixedCode, 'utf-8');
-          console.log(`✅ Sauvegardé: ${fileName}\n`);
-        }
-
-        console.log(`\n✅ JavaScript trouvé dans OpenAction\n`);
+        displayAndCollectScript('OpenAction', code, 'OpenAction');
       }
     }
 
     // Chercher le JavaScript dans Additional Actions (/AA)
     const aaRef = catalog.get(PDFName.of('AA'));
     if (aaRef) {
-      console.log('🔍 Additional Actions (/AA) trouvé, vérification du JavaScript...\n');
       const aa = pdfDoc.context.lookup(aaRef);
 
       if (debugMode) {
-        console.log('Type de AA:', aa.constructor.name);
-        console.log('Contenu:', aa.toString());
-
-        // Afficher toutes les clés disponibles dans /AA
+        console.log('🔍 Additional Actions (/AA)');
         if (aa.dict && aa.dict.entries) {
-          console.log('Clés dans /AA:');
           let hasKeys = false;
           for (const [key, value] of aa.dict.entries()) {
             console.log(`  - ${key}`);
             hasKeys = true;
           }
-          if (!hasKeys) {
-            console.log('  (aucune clé trouvée)');
-          }
+          if (!hasKeys) console.log('  (vide)');
         }
         console.log();
       }
 
       // Actions possibles dans /AA
       const actionTypes = ['WC', 'WS', 'DS', 'WP', 'DP', 'WillClose', 'WillSave', 'DidSave', 'WillPrint', 'DidPrint'];
-      const scriptsFound = [];
 
       for (const actionType of actionTypes) {
         const actionRef = aa.get(PDFName.of(actionType));
         if (actionRef) {
-          if (debugMode) {
-            console.log(`  Vérification de /${actionType}...`);
-          }
-
           const action = pdfDoc.context.lookup(actionRef);
           const code = extractJSFromAction(action, actionType);
-
           if (code) {
-            scriptsFound.push({ name: actionType, code });
-            console.log(`\n${'='.repeat(60)}`);
-            console.log(`📜 Script: ${actionType}`);
-            console.log(`${'='.repeat(60)}\n`);
-            console.log(code);
-            console.log(`\n${'='.repeat(60)}\n`);
+            displayAndCollectScript(actionType, code, 'AdditionalActions');
           }
         }
-      }
-
-      if (scriptsFound.length > 0) {
-        console.log(`\n✅ ${scriptsFound.length} script(s) JavaScript trouvé(s) dans Additional Actions\n`);
-
-        if (shouldSave) {
-          scriptsFound.forEach((script, index) => {
-            const fileName = `${pdfBaseName}_extract_${script.name}.js`;
-            const fixedCode = fixJavaScriptNewlines(script.code);
-            writeFileSync(fileName, fixedCode, 'utf-8');
-            console.log(`✅ Sauvegardé: ${fileName}`);
-          });
-          console.log();
-        }
-      } else if (debugMode) {
-        console.log('  Aucun JavaScript trouvé dans les Additional Actions\n');
       }
     }
 
     // Fonction helper pour inspecter et extraire JavaScript d'un champ
-    const inspectField = (field, fieldIndex, scriptsFound) => {
+    const inspectField = (field, fieldIndex) => {
       const fieldName = field.get(PDFName.of('T'));
       const name = fieldName ? pdfDoc.context.lookup(fieldName).decodeText?.() || `Field${fieldIndex}` : `Field${fieldIndex}`;
-
-      if (debugMode) {
-        console.log(`  Champ ${fieldIndex}: ${name}`);
-
-        // Afficher toutes les clés du champ
-        if (field.dict && field.dict.entries) {
-          const keys = [];
-          for (const [key, value] of field.dict.entries()) {
-            keys.push(key);
-          }
-          if (keys.length > 0) {
-            console.log(`    Clés: ${keys.join(', ')}`);
-          }
-        }
-      }
 
       // Chercher JavaScript dans /A (Action)
       const actionRef = field.get(PDFName.of('A'));
       if (actionRef) {
         const action = pdfDoc.context.lookup(actionRef);
         const code = extractJSFromAction(action, `${name}_Action`);
-
         if (code) {
-          scriptsFound.push({ name: `${name}_Action`, code });
-
-          console.log(`\n${'='.repeat(60)}`);
-          console.log(`📜 Script: ${name}_Action`);
-          console.log(`${'='.repeat(60)}\n`);
-          console.log(code);
-          console.log(`\n${'='.repeat(60)}\n`);
+          displayAndCollectScript(`${name}_Action`, code, 'FormField');
         }
       }
 
@@ -433,29 +405,15 @@ async function extractJavaScript(pdfPath, shouldSave = false, debugMode = false)
       const fieldAARef = field.get(PDFName.of('AA'));
       if (fieldAARef) {
         const fieldAA = pdfDoc.context.lookup(fieldAARef);
-
-        if (debugMode) {
-          console.log(`    /AA trouvé sur ce champ`);
-        }
-
-        // Actions possibles sur un champ
         const fieldActionTypes = ['K', 'F', 'V', 'C', 'Fo', 'Bl', 'PO', 'PC', 'PV', 'PI'];
-        // K = Keystroke, F = Format, V = Validate, C = Calculate, etc.
 
         for (const actionType of fieldActionTypes) {
           const fieldActionRef = fieldAA.get(PDFName.of(actionType));
           if (fieldActionRef) {
             const fieldAction = pdfDoc.context.lookup(fieldActionRef);
             const code = extractJSFromAction(fieldAction, `${name}_${actionType}`);
-
             if (code) {
-              scriptsFound.push({ name: `${name}_${actionType}`, code });
-
-              console.log(`\n${'='.repeat(60)}`);
-              console.log(`📜 Script: ${name}_${actionType}`);
-              console.log(`${'='.repeat(60)}\n`);
-              console.log(code);
-              console.log(`\n${'='.repeat(60)}\n`);
+              displayAndCollectScript(`${name}_${actionType}`, code, 'FormField');
             }
           }
         }
@@ -466,13 +424,10 @@ async function extractJavaScript(pdfPath, shouldSave = false, debugMode = false)
       if (kidsRef) {
         const kids = pdfDoc.context.lookup(kidsRef);
         if (kids && kids.size && kids.size() > 0) {
-          if (debugMode) {
-            console.log(`    ${kids.size()} enfant(s) trouvé(s)`);
-          }
           for (let j = 0; j < kids.size(); j++) {
             const kidRef = kids.lookup(j);
             const kid = pdfDoc.context.lookup(kidRef);
-            inspectField(kid, `${fieldIndex}_${j + 1}`, scriptsFound);
+            inspectField(kid, `${fieldIndex}_${j + 1}`);
           }
         }
       }
@@ -480,40 +435,19 @@ async function extractJavaScript(pdfPath, shouldSave = false, debugMode = false)
 
     // Chercher le JavaScript dans les champs de formulaire (/AcroForm)
     const acroFormRef = catalog.get(PDFName.of('AcroForm'));
-    if (acroFormRef) {
-      console.log('🔍 Formulaire PDF (/AcroForm) trouvé, vérification des champs...\n');
+    if (acroFormRef && !listOnly) {
+      console.log('🔍 Champs de formulaire...\n');
       const acroForm = pdfDoc.context.lookup(acroFormRef);
-
-      if (debugMode) {
-        console.log('Type de AcroForm:', acroForm.constructor.name);
-
-        if (acroForm.dict && acroForm.dict.entries) {
-          console.log('Clés dans /AcroForm:');
-          for (const [key, value] of acroForm.dict.entries()) {
-            console.log(`  - ${key}`);
-          }
-        }
-        console.log();
-      }
-
-      const scriptsFound = [];
 
       // D'abord, vérifier l'ordre de calcul (/CO) - contient souvent des champs avec JavaScript
       const coRef = acroForm.get(PDFName.of('CO'));
       if (coRef) {
         const co = pdfDoc.context.lookup(coRef);
-
-        if (debugMode) {
-          console.log(`🔍 Calculate Order (/CO) trouvé avec ${co.size ? co.size() : 0} champ(s)\n`);
-        }
-
         if (co && co.size && co.size() > 0) {
-          console.log(`Inspection des ${co.size()} champs dans l'ordre de calcul...\n`);
-
           for (let i = 0; i < co.size(); i++) {
             const fieldRef = co.lookup(i);
             const field = pdfDoc.context.lookup(fieldRef);
-            inspectField(field, i + 1, scriptsFound);
+            inspectField(field, i + 1);
           }
         }
       } else {
@@ -521,47 +455,24 @@ async function extractJavaScript(pdfPath, shouldSave = false, debugMode = false)
         const fieldsRef = acroForm.get(PDFName.of('Fields'));
         if (fieldsRef) {
           const fields = pdfDoc.context.lookup(fieldsRef);
-
-          if (debugMode) {
-            console.log(`Nombre de champs dans /Fields: ${fields.size ? fields.size() : 'N/A'}\n`);
-          }
-
-          // Parcourir tous les champs
           if (fields.size && fields.size() > 0) {
             for (let i = 0; i < fields.size(); i++) {
               const fieldRef = fields.lookup(i);
               const field = pdfDoc.context.lookup(fieldRef);
-              inspectField(field, i + 1, scriptsFound);
+              inspectField(field, i + 1);
             }
           }
-        } else if (debugMode) {
-          console.log('  Aucun champ trouvé dans /Fields\n');
         }
-      }
-
-      if (scriptsFound.length > 0) {
-        console.log(`\n✅ ${scriptsFound.length} script(s) JavaScript trouvé(s) dans les champs de formulaire\n`);
-
-        if (shouldSave) {
-          scriptsFound.forEach((script) => {
-            const fileName = `${pdfBaseName}_extract_${script.name}.js`;
-            const fixedCode = fixJavaScriptNewlines(script.code);
-            writeFileSync(fileName, fixedCode, 'utf-8');
-            console.log(`✅ Sauvegardé: ${fileName}`);
-          });
-          console.log();
-        }
-      } else if (debugMode) {
-        console.log('  Aucun JavaScript trouvé dans les champs de formulaire\n');
       }
     }
 
     // Chercher les boutons et annotations sur les pages
-    console.log('🔍 Recherche des boutons et annotations sur les pages...\n');
+    if (!listOnly) {
+      console.log('🔍 Annotations sur les pages...\n');
+    }
     const pagesRef = catalog.get(PDFName.of('Pages'));
     if (pagesRef) {
       const pagesRoot = pdfDoc.context.lookup(pagesRef);
-      const scriptsFound = [];
 
       // Fonction récursive pour parcourir l'arbre des pages
       const scanPageTree = (pageTreeNode, pageNum = 0) => {
@@ -589,41 +500,22 @@ async function extractJavaScript(pdfPath, shouldSave = false, debugMode = false)
           if (annotsRef) {
             const annots = pdfDoc.context.lookup(annotsRef);
 
-            if (debugMode) {
-              console.log(`  Page ${pageNum}: ${annots.size ? annots.size() : 0} annotation(s)`);
-            }
-
             if (annots && annots.size && annots.size() > 0) {
               for (let j = 0; j < annots.size(); j++) {
                 const annotRef = annots.lookup(j);
                 const annot = pdfDoc.context.lookup(annotRef);
 
-                // Obtenir le sous-type de l'annotation
-                const subtypeRef = annot.get(PDFName.of('Subtype'));
-                const subtype = subtypeRef ? pdfDoc.context.lookup(subtypeRef).toString() : null;
-
                 // Obtenir le nom de l'annotation (si disponible)
                 const tRef = annot.get(PDFName.of('T'));
                 const annotName = tRef ? pdfDoc.context.lookup(tRef).decodeText?.() || `Annot${j + 1}` : `Annot${j + 1}`;
-
-                if (debugMode) {
-                  console.log(`    Annotation ${j + 1}: ${annotName} (${subtype})`);
-                }
 
                 // Chercher les actions sur l'annotation
                 const actionRef = annot.get(PDFName.of('A'));
                 if (actionRef) {
                   const action = pdfDoc.context.lookup(actionRef);
                   const code = extractJSFromAction(action, `Page${pageNum}_${annotName}_Action`);
-
                   if (code) {
-                    scriptsFound.push({ name: `Page${pageNum}_${annotName}_Action`, code });
-
-                    console.log(`\n${'='.repeat(60)}`);
-                    console.log(`📜 Script: Page ${pageNum} - ${annotName} (Action)`);
-                    console.log(`${'='.repeat(60)}\n`);
-                    console.log(code);
-                    console.log(`\n${'='.repeat(60)}\n`);
+                    displayAndCollectScript(`Page${pageNum}_${annotName}_Action`, code, 'PageAnnotation');
                   }
                 }
 
@@ -631,29 +523,15 @@ async function extractJavaScript(pdfPath, shouldSave = false, debugMode = false)
                 const aaRef = annot.get(PDFName.of('AA'));
                 if (aaRef) {
                   const aa = pdfDoc.context.lookup(aaRef);
-
-                  if (debugMode) {
-                    console.log(`      /AA trouvé sur cette annotation`);
-                  }
-
-                  // Actions possibles sur une annotation
                   const annotActionTypes = ['E', 'X', 'D', 'U', 'Fo', 'Bl', 'PO', 'PC', 'PV', 'PI'];
-                  // E = Enter, X = Exit, D = MouseDown, U = MouseUp, Fo = Focus, Bl = Blur
 
                   for (const actionType of annotActionTypes) {
                     const annotActionRef = aa.get(PDFName.of(actionType));
                     if (annotActionRef) {
                       const annotAction = pdfDoc.context.lookup(annotActionRef);
                       const code = extractJSFromAction(annotAction, `Page${pageNum}_${annotName}_${actionType}`);
-
                       if (code) {
-                        scriptsFound.push({ name: `Page${pageNum}_${annotName}_${actionType}`, code });
-
-                        console.log(`\n${'='.repeat(60)}`);
-                        console.log(`📜 Script: Page ${pageNum} - ${annotName} (${actionType})`);
-                        console.log(`${'='.repeat(60)}\n`);
-                        console.log(code);
-                        console.log(`\n${'='.repeat(60)}\n`);
+                        displayAndCollectScript(`Page${pageNum}_${annotName}_${actionType}`, code, 'PageAnnotation');
                       }
                     }
                   }
@@ -667,149 +545,73 @@ async function extractJavaScript(pdfPath, shouldSave = false, debugMode = false)
       };
 
       scanPageTree(pagesRoot);
+    }
 
-      if (scriptsFound.length > 0) {
-        console.log(`\n✅ ${scriptsFound.length} script(s) JavaScript trouvé(s) dans les annotations des pages\n`);
+    // ═══════════════════════════════════════════════════════════════════
+    // RÉSUMÉ ET SAUVEGARDE
+    // ═══════════════════════════════════════════════════════════════════
 
-        if (shouldSave) {
-          scriptsFound.forEach((script) => {
-            const fileName = `${pdfBaseName}_extract_${script.name}.js`;
-            const fixedCode = fixJavaScriptNewlines(script.code);
-            writeFileSync(fileName, fixedCode, 'utf-8');
-            console.log(`✅ Sauvegardé: ${fileName}`);
-          });
-          console.log();
-        }
-      } else if (debugMode) {
-        console.log('  Aucun JavaScript trouvé dans les annotations des pages\n');
+    console.log(`\n${'─'.repeat(60)}`);
+    console.log(`📊 RÉSUMÉ`);
+    console.log(`${'─'.repeat(60)}`);
+
+    const byCategory = {};
+    allScripts.forEach(script => {
+      if (!byCategory[script.category]) {
+        byCategory[script.category] = [];
       }
-    }
+      byCategory[script.category].push(script);
+    });
 
-    // Chercher les JavaScripts dans le Names dictionary
-    const namesRef = catalog.get(PDFName.of('Names'));
-
-    if (!namesRef) {
-      console.log('❌ Aucun dictionnaire Names trouvé dans ce PDF');
-      console.log('❌ Aucun OpenAction avec JavaScript trouvé');
-      console.log('ℹ️  Ce PDF ne contient probablement pas de JavaScript');
-      return;
-    }
-
-    const names = pdfDoc.context.lookup(namesRef);
-    const javascriptRef = names.get(PDFName.of('JavaScript'));
-
-    if (!javascriptRef) {
-      console.log('❌ Aucune entrée JavaScript trouvée dans le dictionnaire Names');
-      console.log('❌ Aucun OpenAction avec JavaScript trouvé');
-      console.log('ℹ️  Ce PDF ne contient pas de JavaScript dans les emplacements standards');
-      return;
-    }
-
-    // Récupérer le Name Tree
-    const nameTree = pdfDoc.context.lookup(javascriptRef);
-
-    // Mode debug: afficher la structure
-    if (debugMode) {
-      debugNameTree(nameTree, pdfDoc.context);
-    }
-
-    // Essayer différentes structures de Name Tree
-    let namesArrayRef = nameTree.get(PDFName.of('Names'));
-    let namesArray = null;
-
-    if (namesArrayRef) {
-      // Structure classique avec tableau Names direct
-      namesArray = pdfDoc.context.lookup(namesArrayRef);
+    if (allScripts.length === 0) {
+      console.log('❌ Aucun JavaScript trouvé dans ce PDF');
+      console.log('\n💡 Ce PDF ne contient peut-être pas de JavaScript, ou il utilise');
+      console.log('   une structure non supportée. Utilisez --debug pour plus d\'infos.');
     } else {
-      // Essayer la structure avec Kids (sous-arbres)
-      const kidsRef = nameTree.get(PDFName.of('Kids'));
-      if (kidsRef) {
-        const kids = pdfDoc.context.lookup(kidsRef);
-        if (kids && kids.size && kids.size() > 0) {
-          // Prendre le premier enfant et chercher Names dedans
-          const firstKidRef = kids.lookup(0);
-          const firstKid = pdfDoc.context.lookup(firstKidRef);
-          namesArrayRef = firstKid.get(PDFName.of('Names'));
-          if (namesArrayRef) {
-            namesArray = pdfDoc.context.lookup(namesArrayRef);
-          }
-        }
+      console.log(`✅ Total: ${allScripts.length} script(s) trouvé(s)\n`);
+
+      for (const [category, scripts] of Object.entries(byCategory)) {
+        console.log(`   ${category}: ${scripts.length} script(s)`);
+      }
+
+      if (listOnly) {
+        console.log(`\n📝 Liste des scripts:\n`);
+        allScripts.forEach((script, index) => {
+          console.log(`${index + 1}. ${script.name} (${script.code.length} chars)`);
+        });
+      }
+
+      // Sauvegarder les fichiers
+      if (shouldSave) {
+        console.log(`\n💾 Sauvegarde...\n`);
+        allScripts.forEach(script => {
+          const fileName = `${pdfBaseName}_extract_${script.name}.js`;
+          const fixedCode = fixJavaScriptNewlines(script.code);
+          writeFileSync(fileName, fixedCode, 'utf-8');
+          console.log(`✅ ${fileName}`);
+        });
+
+        // Créer un fichier summary
+        const summaryContent = allScripts.map((script, index) => {
+          return `// ═══════════════════════════════════════════════════════════
+// ${index + 1}. ${script.name} (${script.category})
+// ${script.code.length} caractères
+// ═══════════════════════════════════════════════════════════
+
+${script.code}
+
+`;
+        }).join('\n');
+
+        const summaryFileName = `${pdfBaseName}_ALL_SCRIPTS.js`;
+        writeFileSync(summaryFileName, summaryContent, 'utf-8');
+        console.log(`\n📋 ${summaryFileName} (tous les scripts dans un fichier)`);
+      } else {
+        console.log(`\nℹ️  Utilisez --save pour sauvegarder les scripts`);
       }
     }
 
-    if (!namesArray) {
-      console.log('❌ Structure JavaScript non supportée dans ce PDF');
-      console.log('\n🔍 Informations de diagnostic :');
-      console.log('   Structure du Name Tree trouvée mais format non reconnu.');
-      console.log('\n💡 Solutions possibles :');
-      console.log('   1. Essayez avec un autre lecteur PDF pour régénérer le PDF');
-      console.log('   2. Ouvrez une issue sur GitHub avec votre fichier pour support');
-      console.log('   3. Le JavaScript peut être dans OpenAction ou dans les champs de formulaire\n');
-      return;
-    }
-
-    // Parcourir les paires nom/référence
-    const scriptsFound = [];
-    for (let i = 0; i < namesArray.size(); i += 2) {
-      const scriptName = namesArray.lookup(i);
-      const scriptRef = namesArray.lookup(i + 1);
-      const scriptDict = pdfDoc.context.lookup(scriptRef);
-
-      if (scriptDict) {
-        const jsAction = scriptDict.get(PDFName.of('JS'));
-
-        if (jsAction) {
-          const jsCode = pdfDoc.context.lookup(jsAction);
-          let code = '';
-
-          // Essayer différentes méthodes de décodage
-          if (jsCode && typeof jsCode.decodeText === 'function') {
-            code = jsCode.decodeText();
-          } else if (jsCode && jsCode.asString) {
-            code = jsCode.asString();
-          }
-
-          // Nettoyer le code pour éviter les problèmes d'encodage
-          // Normaliser les retours à la ligne
-          code = code.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-
-          const name = scriptName.asString ? scriptName.asString() : `Script ${i / 2 + 1}`;
-
-          scriptsFound.push({ name, code });
-
-          console.log(`\n${'='.repeat(60)}`);
-          console.log(`📜 Script: ${name}`);
-          console.log(`${'='.repeat(60)}\n`);
-          console.log(code);
-          console.log(`\n${'='.repeat(60)}\n`);
-
-          // Sauvegarder si demandé
-          if (shouldSave) {
-            // Générer le nom du fichier basé sur le PDF source
-            // Ex: sample.pdf → sample_extract.js (pour le premier script)
-            const scriptIndex = scriptsFound.length;
-            const suffix = scriptIndex > 1 ? `_extract${scriptIndex}` : '_extract';
-            const fileName = `${pdfBaseName}${suffix}.js`;
-
-            // Corriger le code pour qu'il soit valide en JavaScript
-            // Échapper les retours à la ligne dans les chaînes de caractères
-            let fixedCode = fixJavaScriptNewlines(code);
-
-            writeFileSync(fileName, fixedCode, 'utf-8');
-            console.log(`✅ Sauvegardé dans: ${fileName}\n`);
-          }
-        }
-      }
-    }
-
-    if (scriptsFound.length === 0) {
-      console.log('❌ Aucun code JavaScript trouvé dans ce PDF');
-    } else {
-      console.log(`\n✅ Total: ${scriptsFound.length} script(s) JavaScript trouvé(s)`);
-      if (!shouldSave) {
-        console.log(`\nℹ️  Utilisez --save pour sauvegarder les scripts dans des fichiers .js`);
-      }
-    }
+    console.log(`${'─'.repeat(60)}\n`);
 
   } catch (error) {
     console.error('❌ Erreur lors de l\'extraction:', error.message);
@@ -825,14 +627,18 @@ if (args.length === 0) {
 📖 Usage: node src/extract-js.js <chemin-du-pdf> [options]
 
 Options:
-  --save     Sauvegarde les scripts extraits dans des fichiers .js
-  --debug    Active le mode debug pour diagnostiquer les structures non supportées
+  --save              Sauvegarde les scripts extraits dans des fichiers .js
+  --debug             Active le mode debug pour diagnostiquer les structures
+  --list              Affiche uniquement la liste des scripts (pas le contenu)
+  --filter <nom>      Filtre par nom de script/champ (ex: --filter bouton)
+  --grep <pattern>    Filtre par contenu (regex, ex: --grep "app.alert")
 
 Exemples:
-  node src/extract-js.js sample.pdf
-  node src/extract-js.js sample.pdf --save
-  node src/extract-js.js problematic.pdf --debug
-  node src/extract-js.js sample.pdf --save --debug
+  node src/extract-js.js file.pdf --list
+  node src/extract-js.js file.pdf --save
+  node src/extract-js.js file.pdf --filter Page20
+  node src/extract-js.js file.pdf --grep "submitForm" --save
+  node src/extract-js.js file.pdf --list | grep -i bouton
   `);
   process.exit(1);
 }
@@ -840,5 +646,20 @@ Exemples:
 const pdfPath = args[0];
 const shouldSave = args.includes('--save');
 const debugMode = args.includes('--debug');
+const listOnly = args.includes('--list');
 
-extractJavaScript(pdfPath, shouldSave, debugMode);
+// Récupérer les valeurs des options avec paramètres
+let filterName = null;
+let grepPattern = null;
+
+const filterIndex = args.indexOf('--filter');
+if (filterIndex !== -1 && args[filterIndex + 1]) {
+  filterName = args[filterIndex + 1];
+}
+
+const grepIndex = args.indexOf('--grep');
+if (grepIndex !== -1 && args[grepIndex + 1]) {
+  grepPattern = args[grepIndex + 1];
+}
+
+extractJavaScript(pdfPath, shouldSave, debugMode, listOnly, grepPattern, filterName);
